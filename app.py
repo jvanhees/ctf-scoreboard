@@ -6,18 +6,19 @@ import threading
 import time
 import traceback
 from bisect import bisect_left
-from html import escape
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlencode, urlparse
 from urllib.request import urlopen
 
 from bs4 import BeautifulSoup
+from jinja2 import Environment, FileSystemLoader, select_autoescape
 
 URL = os.environ.get("SCOREBOARD_URL", "")
 INTERVAL = int(os.environ.get("INTERVAL", "60"))
 DATA = Path(os.environ.get("DATA_DIR", "data"))
 RAW = DATA / "raw"
+HERE = Path(__file__).parent
 WINDOWS = (10, 30, 60)
 METRICS = ("c", "d", "l")
 OUR_TEAM = os.environ.get("OUR_TEAM", "")
@@ -157,125 +158,43 @@ def rate(rows, span=300):
 
 TITLE = "CTF score tracker"
 STATUS_COLOR = {"OK": "#3ddc97", "FC": "#ffb454", "FF": "#ff5c8a"}
-CSS = """
-:root{--bg:#0b1622;--panel:#122233;--line:#1f344a;--text:#e6edf3;--dim:#6b8299;--ok:#3ddc97;--fc:#ffb454;--ff:#ff5c8a}
-body{background:var(--bg);color:var(--text);font:14px/1.45 system-ui,sans-serif;margin:0;padding:24px 32px}
-h1{font-size:22px;margin:0 0 4px}
-.bar{display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin:12px 0 20px;color:var(--dim)}
-.pill{padding:4px 14px;border-radius:999px;background:var(--panel);color:var(--text);text-decoration:none}
-.pill.on{background:var(--ok);color:var(--bg);font-weight:600}
-.scroll{overflow-x:auto}
-table{border-collapse:separate;border-spacing:0;background:var(--panel);border-radius:8px}
-th,td{padding:10px 14px;border-bottom:1px solid var(--line);vertical-align:top;text-align:left}
-thead th{color:var(--dim);font-size:12px;letter-spacing:.06em;text-transform:uppercase}
-tbody th{white-space:nowrap}
-tbody tr:hover{background:#16293d}
-td.total{background:#0f1d2c}
-.team{font-size:15px}.sub{color:var(--dim);font-size:12px;font-weight:400}
-.m{display:flex;justify-content:space-between;gap:16px;color:var(--text);text-decoration:none;font-variant-numeric:tabular-nums}
-.m:hover{color:var(--ok)}.k{color:var(--dim)}.m.zero span:last-child{color:var(--dim)}
-.st{display:block;text-decoration:none;color:var(--dim);font-size:12px}
-.st div{display:flex;justify-content:space-between;gap:8px}
-.badge{font-weight:700}.OK{color:var(--ok)}.FC{color:var(--fc)}.FF,.err{color:var(--ff)}
-.strip{display:block;width:100%;margin:3px 0 6px}
-.strip+table,div+table{margin-top:16px}
-.muted{color:var(--dim)}a{color:var(--text)}
-.hot{border-radius:4px;padding:0 4px;margin:0 -4px}.hot b{font-size:11px;margin-right:4px}
-.hot.good{background:rgba(61,220,151,.2)}.hot.bad{background:rgba(255,92,138,.25)}
-.hotlist a{padding:2px 10px;border-radius:999px;text-decoration:none}
-tr.ours>*{background:#17344d}
-dialog{width:min(1000px,95vw);height:min(600px,90vh);padding:0;background:var(--bg);border:1px solid var(--line);border-radius:10px}
-dialog::backdrop{background:rgba(0,0,0,.6)}dialog iframe{width:100%;height:100%;border:0}
-dialog button{position:absolute;top:12px;right:12px;font-size:20px}
-button{background:var(--panel);color:var(--text);border:0;border-radius:999px;padding:2px 12px;cursor:pointer}
-.embed .back{display:none}
-.clock{display:flex;align-items:baseline;gap:24px;flex-wrap:wrap;margin:8px 0 16px}
-.clock b{font-size:56px;font-weight:700;font-variant-numeric:tabular-nums;line-height:1}
-.clock .next{font-size:20px;color:var(--dim)}.clock .time{margin-left:auto;font-size:18px;color:var(--dim);font-variant-numeric:tabular-nums}
-.progress{flex-basis:100%;height:10px;background:var(--panel);border-radius:999px;overflow:hidden}
-.progress div{height:100%;width:0;background:var(--ok)}
-"""
-
-
-# graph links open in a popup on the dashboard; reload pauses while it is open, or it would close it
-JS = """
-if (top !== self) {
-  document.documentElement.classList.add("embed");
-  addEventListener("keydown", e => { if (e.key === "Escape") parent.document.querySelector("dialog").close(); });
-}
-const dlg = document.querySelector("dialog");
-const clock = document.querySelector(".clock");
-if (clock) {
-  // server time, so a viewer with a wrong device clock still sees the round boundaries right
-  const skew = clock.dataset.now - Date.now(), round = clock.dataset.round * 1000;
-  const tick = () => {
-    const now = new Date(Date.now() + skew), left = round - now % round, secs = Math.ceil(left / 1000);
-    clock.querySelector(".time").textContent = now.toLocaleTimeString("en-GB");
-    clock.querySelector("b").textContent = `${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, "0")}`;
-    clock.querySelector(".progress div").style.width = `${100 - left / round * 100}%`;
-  };
-  tick();
-  setInterval(tick, 1000);
-}
-setInterval(() => { if (!dlg || !dlg.open) location.reload(); }, 10000);
-document.addEventListener("click", e => {
-  const a = e.target.closest('a[href^="/graph"]');
-  if (dlg && a) { e.preventDefault(); dlg.querySelector("iframe").src = a.href; dlg.showModal(); }
-  else if (e.target === dlg || e.target.closest("dialog button")) dlg.close();
-});
-"""
-
-
-def page(title, body):
-    return (f"<!doctype html><meta charset=utf-8>"
-            f"<meta name=viewport content='width=device-width'><title>{escape(title)}</title>"
-            f"<style>{CSS}</style><h1>{escape(title)}</h1>{body}<script>{JS}</script>")
-
-
-def hm(ts):
-    return time.strftime("%H:%M", time.localtime(ts))
-
-
-def graph_url(team, service, metric, minutes, **extra):
-    return "/graph?" + urlencode({"team": team, "service": service, "metric": metric, "window": minutes, **extra})
 
 
 def spike_label(ratio):
     return "new" if ratio == float("inf") else f"x{ratio:.0f}"
 
 
-def link(team, service, metric, gain, current, minutes, expected=None):
-    label = "P" if metric == "points" else metric.upper()
-    r = spike(gain, expected)
-    cls = "m" + (" zero" if gain == 0 else "") + (f" hot {'bad' if metric == 'l' else 'good'}" if r else "")
-    normal = "" if expected is None else f", normal ~{expected:.0f}"
-    mark = f"<b>{spike_label(r)}</b>" if r else ""
-    return (f'<a href="{graph_url(team, service, metric, minutes)}" class="{cls}" title="now {current}{normal}">'
-            f'<span class="k">{label}</span><span>{mark}{gain:+d}</span></a>')
+env = Environment(loader=FileSystemLoader(HERE / "templates"), autoescape=select_autoescape(["html"]),
+                  trim_blocks=True, lstrip_blocks=True)
+env.filters.update(hm=lambda ts: time.strftime("%H:%M", time.localtime(ts)),
+                   hms=lambda ts: time.strftime("%H:%M:%S", time.localtime(ts)),
+                   spike=spike_label)
+env.globals["status_color"] = STATUS_COLOR
 
 
-def strip(statuses, height=6):
-    # shortcut: one slot per scrape, so periods where the scraper itself failed are not visible
-    rects = "".join(f'<rect x="{i}" width="1.05" height="1" fill="{STATUS_COLOR.get(s, "#6b8299")}"/>'
-                    for i, s in enumerate(statuses))
-    return (f'<svg class="strip" viewBox="0 0 {len(statuses)} 1" preserveAspectRatio="none" shape-rendering="crispEdges" '
-            f'style="height:{height}px">{rects}</svg>')
+def render(template, **ctx):
+    return env.get_template(template).render(**ctx)
+
+
+def graph_url(team, service, metric, minutes, **extra):
+    return "/graph?" + urlencode({"team": team, "service": service, "metric": metric, "window": minutes, **extra})
+
+
+def metric_link(team, service, metric, gain, current, minutes, expected=None):
+    return {"label": "P" if metric == "points" else metric.upper(), "gain": gain, "current": current,
+            "expected": expected, "ratio": spike(gain, expected), "kind": "bad" if metric == "l" else "good",
+            "url": graph_url(team, service, metric, minutes)}
 
 
 def index(db, minutes):
     last, teams, svcs = window_data(db, minutes)
-    bar = [f'<a class="pill{" on" if w == minutes else ""}" href="/?window={w}">{w} min</a>' for w in WINDOWS]
-    if last is not None:
-        age = int(time.time()) - last
-        bar.append(f'<span class="{"err" if age > 3 * INTERVAL else ""}">'
-                   f'last scrape {time.strftime("%H:%M:%S", time.localtime(last))} ({age}s ago)</span>')
-    if last_error["msg"]:
-        bar.append(f'<span class="err">{escape(last_error["msg"])}</span>')
-    head = (f'<div class="clock" data-now="{time.time() * 1000:.0f}" data-round="{ROUND_MINUTES * 60}">'
-            '<b></b><span class="next">until next flag round</span><span class="time"></span>'
-            '<div class="progress"><div></div></div></div><div class="bar">' + "".join(bar) + "</div>")
+    ctx = dict(title=TITLE, windows=WINDOWS, minutes=minutes, last=last, error=last_error["msg"], rows=[],
+               now_ms=round(time.time() * 1000), round_secs=ROUND_MINUTES * 60,
+               spike_ratio=SPIKE_RATIO, baseline_minutes=BASELINE_MINUTES)
     if last is None:
-        return page(TITLE, head + "<p>No data yet.</p>")
+        return render("index.html", **ctx)
+    ctx["age"] = int(time.time()) - last
+    ctx["stale"] = ctx["age"] > 3 * INTERVAL
     services = [r[0] for r in db.execute(
         "SELECT service FROM service GROUP BY service ORDER BY min(ts), min(rowid)")]
     by = {(r[0], r[1]): r for r in svcs}
@@ -286,93 +205,61 @@ def index(db, minutes):
     rows, hot = [], []
     for team, points, dpoints, epoints, uptime in teams:
         mine = [by[team, s] for s in services if (team, s) in by]
-        total = [link(team, "", "points", dpoints, points, minutes, epoints)]
-        total += [link(team, "", m, sum(r[6 + i] for r in mine), sum(r[3 + i] for r in mine), minutes,
-                       None if any(r[9 + i] is None for r in mine) else sum(r[9 + i] for r in mine))
+        total = [metric_link(team, "", "points", dpoints, points, minutes, epoints)]
+        total += [metric_link(team, "", m, sum(r[6 + i] for r in mine), sum(r[3 + i] for r in mine), minutes,
+                              None if any(r[9 + i] is None for r in mine) else sum(r[9 + i] for r in mine))
                   for i, m in enumerate(METRICS)]
-        cells = [f'<th><div class="team">{escape(team)}</div><div class="sub">{points} pts</div></th>',
-                 f'<td class="total"><div class="st"><div><span>SLA</span>'
-                 f'<span>{uptime:g}%</span></div></div>' + "".join(total) + "</td>"]
+        cells = []
         for s in services:
             if (team, s) not in by:
-                cells.append("<td></td>")
+                cells.append(None)
                 continue
             _, _, st, c, d, l, gc, gd, gl, ec, ed, el = by[team, s]
-            for m, g, e in zip(METRICS, (gc, gd, gl), (ec, ed, el)):
-                if r := spike(g, e):
-                    hot.append((team == OUR_TEAM and m == "l", r, g, team, s, m))
-            q = urlencode({"team": team, "service": s, "metric": "status", "window": minutes})
-            cells.append(f'<td><a class="st" href="/graph?{q}" title="downtime history">'
-                         f'<div><span class="badge {escape(st)}">{escape(st)}</span></div>'
-                         f'{strip(hist.get((team, s), []))}</a>'
-                         + "".join(link(team, s, m, g, cur, minutes, e)
-                                   for m, g, cur, e in zip(METRICS, (gc, gd, gl), (c, d, l), (ec, ed, el))) + "</td>")
-        rows.append(f'<tr class="{"ours" if team == OUR_TEAM else ""}">' + "".join(cells) + "</tr>")
-    if teams[0][3] is None:
-        hotlist = f"no baseline yet, needs {minutes + BASELINE_MINUTES} min of data"
-    else:
-        hot.sort(key=lambda h: (not h[0], -h[1], -h[2]))
-        hotlist = "".join(f'<a class="hot {"bad" if m == "l" else "good"}" href="{graph_url(t, s, m, minutes)}">'
-                          f'{escape(t)} {escape(s)} {m.upper()} {g:+d} ({spike_label(r)})</a>'
-                          for _, r, g, t, s, m in hot[:5]) or "nothing unusual"
-    head += f'<div class="bar hotlist"><span>Hot right now:</span>{hotlist}</div>'
-    table = ('<div class="scroll"><table><thead><tr><th>Team</th><th>Total</th>'
-             + "".join(f"<th>{escape(s)}</th>" for s in services)
-             + "</tr></thead><tbody>" + "".join(rows) + "</tbody></table></div>")
-    legend = (f'<p class="muted">Gains over the last {minutes} minutes. P points, C captured, D defence, L see board legend. '
-              f'SLA is the uptime from the board; the bar under each status shows the status per scrape '
-              f'(<span class="OK">OK</span> <span class="FC">FC</span> <span class="FF">FF</span>). '
-              f'Highlighted: at least {SPIKE_RATIO}x the normal rate of the {BASELINE_MINUTES} min before (green gaining, red losing). '
-              f'Click a number for its graph, a status for its downtime history. Hover a number for its current value.</p>')
-    popup = '<dialog><button aria-label="close">&times;</button><iframe title="graph"></iframe></dialog>'
-    return page(TITLE, head + table + legend + popup)
+            links = [metric_link(team, s, m, g, cur, minutes, e)
+                     for m, g, cur, e in zip(METRICS, (gc, gd, gl), (c, d, l), (ec, ed, el))]
+            hot += [dict(x, team=team, service=s, ours=team == OUR_TEAM and x["label"] == "L")
+                    for x in links if x["ratio"]]
+            cells.append({"status": st, "hist": hist.get((team, s), []), "metrics": links,
+                          "url": graph_url(team, s, "status", minutes)})
+        rows.append({"team": team, "points": points, "uptime": uptime, "ours": team == OUR_TEAM,
+                     "total": total, "cells": cells})
+    hot.sort(key=lambda h: (not h["ours"], -h["ratio"], -h["gain"]))
+    no_baseline = teams[0][3] is None
+    ctx.update(services=services, rows=rows, hot=hot[:5],
+               hot_note=f"no baseline yet, needs {minutes + BASELINE_MINUTES} min of data" if no_baseline
+               else "nothing unusual")
+    return render("index.html", **ctx)
 
 
-def svg(rows):
+def chart(rows):
     if len(rows) < 2:
-        return "<p>Not enough data yet.</p>"
+        return None
     w, h = 900, 300
     t0, t1 = rows[0][0], rows[-1][0]
     lo, hi = min(v for _, v in rows), max(v for _, v in rows)
     span = (hi - lo) or 1
     pts = " ".join(f"{(t - t0) / (t1 - t0) * w:.1f},{h - (v - lo) / span * h:.1f}" for t, v in rows)
-    txt = 'fill="#6b8299" font-size="12"'
-    return (f'<svg viewBox="-50 -10 {w + 60} {h + 30}" width="100%" style="max-width:{w + 60}px">'
-            f'<line x1="0" y1="{h}" x2="{w}" y2="{h}" stroke="#1f344a"/>'
-            f'<polyline points="{pts}" fill="none" stroke="#3ddc97" stroke-width="2"/>'
-            f'<text x="-8" y="5" text-anchor="end" {txt}>{hi:g}</text>'
-            f'<text x="-8" y="{h}" text-anchor="end" {txt}>{lo:g}</text>'
-            f'<text x="0" y="{h + 20}" {txt}>{hm(t0)}</text>'
-            f'<text x="{w}" y="{h + 20}" text-anchor="end" {txt}>{hm(t1)}</text></svg>')
+    return {"w": w, "h": h, "pts": pts, "lo": lo, "hi": hi, "t0": t0, "t1": t1}
 
 
-def status_history(rows):
-    if not rows:
-        return "<p>No data yet.</p>"
+def downtime(rows):
     runs = []
     for ts, st in rows:
         if runs and runs[-1][2] == st:
             runs[-1][1] = ts
         else:
             runs.append([ts, ts, st])
-    down = [r for r in reversed(runs) if r[2] != "OK"]
-    out = (f'<p class="muted">{hm(rows[0][0])} to {hm(rows[-1][0])}: {len(rows)} scrapes, '
-           f'{len(down)} downtime periods</p><div style="max-width:910px">{strip([s for _, s in rows], 28)}</div>')
-    if down:
-        out += ('<table><thead><tr><th>From</th><th>To</th><th>Status</th><th>Duration</th></tr></thead><tbody>'
-                + "".join(f'<tr><td>{hm(a)}</td><td>{hm(b)}</td><td class="badge {escape(st)}">{escape(st)}</td>'
-                          f'<td>{(b - a + INTERVAL) / 60:g} min</td></tr>' for a, b, st in down)
-                + "</tbody></table>")
-    return out
+    return [r for r in reversed(runs) if r[2] != "OK"]
 
 
 def graph(db, q, minutes):
     team, service, metric = q.get("team", ""), q.get("service", ""), q.get("metric", "")
-    back = f'<a class="pill back" href="/?window={minutes}">back</a>'
     if metric == "status":
         rows = db.execute("SELECT ts, status FROM service WHERE team = ? AND service = ? ORDER BY ts",
                           (team, service)).fetchall()
-        return page(f"{team} {service} downtime", f'<div class="bar">{back}</div>' + status_history(rows))
+        return render("status.html", title=f"{team} {service} downtime", minutes=minutes, interval=INTERVAL,
+                      statuses=[s for _, s in rows], down=downtime(rows),
+                      first=rows[0][0] if rows else None, last=rows[-1][0] if rows else None)
     if metric == "points":
         rows = db.execute("SELECT ts, points FROM team WHERE team = ? ORDER BY ts", (team,)).fetchall()
     elif metric in METRICS and service:
@@ -384,10 +271,11 @@ def graph(db, q, minutes):
     else:
         return None
     per_min = q.get("mode") == "rate"
-    toggle = "".join(f'<a class="pill{" on" if on else ""}" href="{graph_url(team, service, metric, minutes, mode=mode)}">'
-                    f'{label}</a>' for mode, label, on in (("total", "running total", not per_min),
-                                                            ("rate", "per minute (5 min avg)", per_min)))
-    return page(f"{team} {service or 'total'} {metric.upper()}", f'<div class="bar">{back}{toggle}</div>' + svg(rate(rows) if per_min else rows))
+    toggle = [{"label": label, "on": on, "url": graph_url(team, service, metric, minutes, mode=mode)}
+              for mode, label, on in (("total", "running total", not per_min),
+                                      ("rate", "per minute (5 min avg)", per_min))]
+    return render("graph.html", title=f"{team} {service or 'total'} {metric.upper()}", minutes=minutes,
+                  toggle=toggle, c=chart(rate(rows) if per_min else rows))
 
 
 class Handler(BaseHTTPRequestHandler):

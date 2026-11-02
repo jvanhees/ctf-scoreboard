@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% from "macros.html" import strip %}
+{% block body %}
+<div class="bar"><a class="pill back" href="/?window={{ minutes }}">back</a></div>
+{% if not statuses %}
+<p>No data yet.</p>
+{% else %}
+<p class="muted">{{ first|hm }} to {{ last|hm }}: {{ statuses|length }} scrapes, {{ down|length }} downtime periods</p>
+<div style="max-width:910px">{{ strip(statuses, 28) }}</div>
+{% if down %}
+<table>
+  <thead><tr><th>From</th><th>To</th><th>Status</th><th>Duration</th></tr></thead>
+  <tbody>
+  {% for a, b, st in down %}
+    <tr><td>{{ a|hm }}</td><td>{{ b|hm }}</td><td class="badge {{ st }}">{{ st }}</td><td>{{ '%g'|format((b - a + interval) / 60) }} min</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+{% endif %}
+{% endblock %}

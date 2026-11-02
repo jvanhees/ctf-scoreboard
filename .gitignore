@@ -1,3 +1,4 @@
 data/
 demo-data/
 __pycache__/
+.venv/

@@ -1,0 +1,13 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width">
+<title>{{ title }}</title>
+<style>
+{% include "style.css" %}
+</style>
+<h1>{{ title }}</h1>
+{% block body %}{% endblock %}
+<script>
+{% include "app.js" %}
+</script>

@@ -1,0 +1,70 @@
+{% extends "base.html" %}
+{% from "macros.html" import strip, metric %}
+{% block body %}
+<div class="clock" data-now="{{ now_ms }}" data-round="{{ round_secs }}">
+  <b></b><span class="next">until next flag round</span><span class="time"></span>
+  <div class="progress"><div></div></div>
+</div>
+<div class="bar">
+  {% for w in windows %}
+  <a class="pill{% if w == minutes %} on{% endif %}" href="/?window={{ w }}">{{ w }} min</a>
+  {% endfor %}
+  {% if last %}
+  <span class="{% if stale %}err{% endif %}">last scrape {{ last|hms }} ({{ age }}s ago)</span>
+  {% endif %}
+  {% if error %}
+  <span class="err">{{ error }}</span>
+  {% endif %}
+</div>
+{% if not rows %}
+<p>No data yet.</p>
+{% else %}
+<div class="bar hotlist">
+  <span>Hot right now:</span>
+  {% for h in hot %}
+  <a class="hot {{ h.kind }}" href="{{ h.url }}">{{ h.team }} {{ h.service }} {{ h.label }} {{ '%+d'|format(h.gain) }} ({{ h.ratio|spike }})</a>
+  {% else %}
+  {{ hot_note }}
+  {% endfor %}
+</div>
+<div class="scroll">
+<table>
+  <thead>
+    <tr><th>Team</th><th>Total</th>{% for s in services %}<th>{{ s }}</th>{% endfor %}</tr>
+  </thead>
+  <tbody>
+  {% for r in rows %}
+    <tr class="{% if r.ours %}ours{% endif %}">
+      <th><div class="team">{{ r.team }}</div><div class="sub">{{ r.points }} pts</div></th>
+      <td class="total">
+        <div class="st"><div><span>SLA</span><span>{{ '%g'|format(r.uptime) }}%</span></div></div>
+        {% for m in r.total %}{{ metric(m) }}{% endfor %}
+      </td>
+      {% for c in r.cells %}
+      {% if c %}
+      <td>
+        <a class="st" href="{{ c.url }}" title="downtime history">
+          <div><span class="badge {{ c.status }}">{{ c.status }}</span></div>
+          {{ strip(c.hist) }}
+        </a>
+        {% for m in c.metrics %}{{ metric(m) }}{% endfor %}
+      </td>
+      {% else %}
+      <td></td>
+      {% endif %}
+      {% endfor %}
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+<p class="muted">
+  Gains over the last {{ minutes }} minutes. P points, C captured, D defence, L see board legend.
+  SLA is the uptime from the board; the bar under each status shows the status per scrape
+  (<span class="OK">OK</span> <span class="FC">FC</span> <span class="FF">FF</span>).
+  Highlighted: at least {{ spike_ratio }}x the normal rate of the {{ baseline_minutes }} min before (green gaining, red losing).
+  Click a number for its graph, a status for its downtime history. Hover a number for its current value.
+</p>
+<dialog><button aria-label="close">&times;</button><iframe title="graph"></iframe></dialog>
+{% endif %}
+{% endblock %}

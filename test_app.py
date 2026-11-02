@@ -51,6 +51,13 @@ class Test(unittest.TestCase):
         self.assertIsNone(app.spike(6, 2))
         self.assertIn("krongdi ATG C +50 (x5)", app.index(db, 10))
 
+    def test_escapes_scraped_names(self):
+        db = app.connect(":memory:")
+        app.store(db, 0, board(1, "OK").replace("krongdi", "&lt;script&gt;x"))
+        page = app.index(db, 10)
+        self.assertNotIn("<script>x", page)
+        self.assertIn("&lt;script&gt;x", page)
+
     def test_rate(self):
         self.assertEqual(app.rate([(0, 0), (60, 10), (120, 20)]), [(60, 10.0), (120, 10.0)])
 
