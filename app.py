@@ -24,6 +24,7 @@ OUR_TEAM = os.environ.get("OUR_TEAM", "")
 BASELINE_MINUTES = 60
 # a gain is a spike when it is at least SPIKE_RATIO x the normal rate and SPIKE_MIN points above it
 SPIKE_RATIO, SPIKE_MIN = 2, 5
+ROUND_MINUTES = 10
 last_error = {"msg": None}
 
 SCHEMA = """
@@ -188,6 +189,11 @@ dialog::backdrop{background:rgba(0,0,0,.6)}dialog iframe{width:100%;height:100%;
 dialog button{position:absolute;top:12px;right:12px;font-size:20px}
 button{background:var(--panel);color:var(--text);border:0;border-radius:999px;padding:2px 12px;cursor:pointer}
 .embed .back{display:none}
+.clock{display:flex;align-items:baseline;gap:24px;flex-wrap:wrap;margin:8px 0 16px}
+.clock b{font-size:56px;font-weight:700;font-variant-numeric:tabular-nums;line-height:1}
+.clock .next{font-size:20px;color:var(--dim)}.clock .time{margin-left:auto;font-size:18px;color:var(--dim);font-variant-numeric:tabular-nums}
+.progress{flex-basis:100%;height:10px;background:var(--panel);border-radius:999px;overflow:hidden}
+.progress div{height:100%;width:0;background:var(--ok)}
 """
 
 
@@ -198,6 +204,19 @@ if (top !== self) {
   addEventListener("keydown", e => { if (e.key === "Escape") parent.document.querySelector("dialog").close(); });
 }
 const dlg = document.querySelector("dialog");
+const clock = document.querySelector(".clock");
+if (clock) {
+  // server time, so a viewer with a wrong device clock still sees the round boundaries right
+  const skew = clock.dataset.now - Date.now(), round = clock.dataset.round * 1000;
+  const tick = () => {
+    const now = new Date(Date.now() + skew), left = round - now % round, secs = Math.ceil(left / 1000);
+    clock.querySelector(".time").textContent = now.toLocaleTimeString("en-GB");
+    clock.querySelector("b").textContent = `${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, "0")}`;
+    clock.querySelector(".progress div").style.width = `${100 - left / round * 100}%`;
+  };
+  tick();
+  setInterval(tick, 1000);
+}
 setInterval(() => { if (!dlg || !dlg.open) location.reload(); }, 10000);
 document.addEventListener("click", e => {
   const a = e.target.closest('a[href^="/graph"]');
@@ -252,7 +271,9 @@ def index(db, minutes):
                    f'last scrape {time.strftime("%H:%M:%S", time.localtime(last))} ({age}s ago)</span>')
     if last_error["msg"]:
         bar.append(f'<span class="err">{escape(last_error["msg"])}</span>')
-    head = '<div class="bar">' + "".join(bar) + "</div>"
+    head = (f'<div class="clock" data-now="{time.time() * 1000:.0f}" data-round="{ROUND_MINUTES * 60}">'
+            '<b></b><span class="next">until next flag round</span><span class="time"></span>'
+            '<div class="progress"><div></div></div></div><div class="bar">' + "".join(bar) + "</div>")
     if last is None:
         return page(TITLE, head + "<p>No data yet.</p>")
     services = [r[0] for r in db.execute(
