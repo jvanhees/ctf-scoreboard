@@ -1,7 +1,7 @@
 services:
   scoreboard:
     build: .
-    ports: ["8080:8080"]
+    ports: ["23010:8080"]
     volumes: ["./data:/app/data"]
     environment:
       SCOREBOARD_URL: https://cybernet.certifiedsecure.org/api/data
