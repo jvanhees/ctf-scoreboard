@@ -1,8 +1,12 @@
 {% macro strip(statuses, height=6) -%}
 {# shortcut: one slot per scrape, so periods where the scraper itself failed are not visible #}
 <svg class="strip" viewBox="0 0 {{ statuses|length }} 1" preserveAspectRatio="none" shape-rendering="crispEdges" style="height:{{ height }}px">
-{%- for s in statuses %}<rect x="{{ loop.index0 }}" width="1.05" height="1" fill="{{ status_color.get(s, '#6b8299') }}"/>{% endfor -%}
+{%- for s in statuses %}<rect x="{{ loop.index0 }}" width="1.05" height="1" fill="{{ status_color(s) }}"/>{% endfor -%}
 </svg>
+{%- endmacro %}
+
+{% macro badge(st) -%}
+<span class="badge" style="color:{{ status_color(st) }}" title="{{ status_text(st) }}">{{ st }}</span>
 {%- endmacro %}
 
 {% macro metric(m) -%}

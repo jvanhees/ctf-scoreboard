@@ -4,8 +4,8 @@ services:
     ports: ["8080:8080"]
     volumes: ["./data:/app/data"]
     environment:
-      SCOREBOARD_URL: http://cybernet.certifiedsecure.org/scoreboard
+      SCOREBOARD_URL: https://cybernet.certifiedsecure.org/api/data
       INTERVAL: 30
       TZ: Europe/Amsterdam
-      OUR_TEAM: ""  # our team name as shown on the board, highlights our row
+      OUR_TEAM: zombura  # exactly as shown on the board, highlights our row
     restart: always

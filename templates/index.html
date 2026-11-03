@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "macros.html" import strip, metric %}
+{% from "macros.html" import strip, metric, badge %}
 {% block body %}
 <div class="clock" data-now="{{ now_ms }}" data-round="{{ round_secs }}">
   <b></b><span class="next">until next flag round</span><span class="time"></span>
@@ -44,7 +44,7 @@
       {% if c %}
       <td>
         <a class="st" href="{{ c.url }}" title="downtime history">
-          <div><span class="badge {{ c.status }}">{{ c.status }}</span></div>
+          <div>{{ badge(c.status) }}</div>
           {{ strip(c.hist) }}
         </a>
         {% for m in c.metrics %}{{ metric(m) }}{% endfor %}
@@ -59,11 +59,13 @@
 </table>
 </div>
 <p class="muted">
-  Gains over the last {{ minutes }} minutes. P points, C captured, D defence, L see board legend.
-  SLA is the uptime from the board; the bar under each status shows the status per scrape
-  (<span class="OK">OK</span> <span class="FC">FC</span> <span class="FF">FF</span>).
+  Gains over the last {{ minutes }} minutes. P points, C flags captured, D flags defended, L flags lost.
+  SLA is the uptime from the board; the bar under each status shows the status per scrape.
   Highlighted: at least {{ spike_ratio }}x the normal rate of the {{ baseline_minutes }} min before (green gaining, red losing).
   Click a number for its graph, a status for its downtime history. Hover a number for its current value.
+</p>
+<p class="muted">
+  {% for code, (_, text) in status.items() %}{{ badge(code) }} {{ text }}{% if not loop.last %}; {% endif %}{% endfor %}.
 </p>
 <dialog><button aria-label="close">&times;</button><iframe title="graph"></iframe></dialog>
 {% endif %}

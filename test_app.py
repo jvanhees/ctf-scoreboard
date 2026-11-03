@@ -1,3 +1,4 @@
+import json
 import unittest
 
 import app
@@ -5,14 +6,14 @@ import app
 app.INTERVAL = 60
 
 
-def board(atg_c, ice_status):
-    return f"""<table>
-<tr><th>#</th><th>TEAM</th><th>POINTS</th><th>UPTIME</th><th>ATG</th><th>ICEBANK</th><th>LASER</th></tr>
-<tr><td>1</td><td>krongdi<br><small>KPN</small></td><td>4276</td><td>97.81%</td>
-  <td><span>&#9745;</span> OK<br>C {atg_c}<br>D 47<br>L 6</td>
-  <td>{ice_status}<br>C 58<br>D 1<br>L 29</td>
-  <td></td></tr>
-</table>"""
+def board(atg_c, ice_status, name="krongdi"):
+    # shape of /api/data; service fields are our guess until the live board has services
+    return json.dumps({"success": {"status": {"title": "Defense"}, "round": 1, "highscore": [{
+        "name": name, "subname": "KPN", "color": "#21415C", "scores": [0, 4000, 4276], "sla": "97.81%",
+        "services": {
+            "ATG": {"status": "OK", "capture": atg_c, "defend": 47, "lost": 6},
+            "ICEBANK": {"status": ice_status, "capture": 58, "defend": 1, "lost": 29},
+        }}]}})
 
 
 class Test(unittest.TestCase):
@@ -36,7 +37,7 @@ class Test(unittest.TestCase):
         self.assertIn("<span>97.81%</span>", page)
         history = app.graph(db, {"team": "krongdi", "service": "ICEBANK", "metric": "status"}, 10)
         self.assertIn("1 downtime periods", history)
-        self.assertIn(">FF</td><td>1 min</td>", history)
+        self.assertIn(">FF</span></td><td>1 min</td>", history)
 
     def test_spike(self):
         db = app.connect(":memory:")
@@ -53,7 +54,7 @@ class Test(unittest.TestCase):
 
     def test_escapes_scraped_names(self):
         db = app.connect(":memory:")
-        app.store(db, 0, board(1, "OK").replace("krongdi", "&lt;script&gt;x"))
+        app.store(db, 0, board(1, "OK", name="<script>x"))
         page = app.index(db, 10)
         self.assertNotIn("<script>x", page)
         self.assertIn("&lt;script&gt;x", page)

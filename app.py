@@ -1,5 +1,5 @@
+import json
 import os
-import re
 import sqlite3
 import sys
 import threading
@@ -11,7 +11,6 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlencode, urlparse
 from urllib.request import urlopen
 
-from bs4 import BeautifulSoup
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
 URL = os.environ.get("SCOREBOARD_URL", "")
@@ -43,30 +42,20 @@ def connect(path=None):
     return db
 
 
-# shortcut: guessed from photos (table: # | team | points | uptime | one cell per service), not real HTML.
-# Fix this function against the live page, then run `python app.py reparse` to rebuild from data/raw.
-CELL = re.compile(r"(\S+)\s+C\s*(\d+)\s*D\s*(\d+)\s*L\s*(\d+)")
-
-
-def parse(html):
-    soup = BeautifulSoup(html, "html.parser")
-    header, *rows = soup.find_all("tr")
-    services = [th.get_text(strip=True) for th in header.find_all(["th", "td"])][4:]
+# shortcut: the service field names are guessed from the board's HTML template (service-capture/-defend/-lost/-status),
+# because /api/data had no services yet when we saw it. Fix them here, then `python app.py reparse` rebuilds from data/raw.
+def parse(raw):
     teams, svcs = [], []
-    for tr in rows:
-        cells = tr.find_all(["td", "th"])
-        if len(cells) < 4:
-            continue
-        name = next(cells[1].stripped_strings)
-        teams.append((name, int(cells[2].get_text(strip=True)), float(cells[3].get_text(strip=True).rstrip("%"))))
-        for svc, cell in zip(services, cells[4:]):
-            if m := CELL.search(cell.get_text(" ")):
-                svcs.append((name, svc, m[1], int(m[2]), int(m[3]), int(m[4])))
+    for t in json.loads(raw)["success"]["highscore"]:
+        # scores is the points history, oldest first
+        teams.append((t["name"], t["scores"][-1] if t["scores"] else 0, float(t["sla"].rstrip("%"))))
+        for name, svc in t["services"].items():
+            svcs.append((t["name"], name, svc["status"], svc["capture"], svc["defend"], svc["lost"]))
     return teams, svcs
 
 
-def store(db, ts, html):
-    teams, svcs = parse(html)
+def store(db, ts, raw):
+    teams, svcs = parse(raw)
     if not teams:
         raise ValueError("parsed 0 teams")
     with db:
@@ -157,7 +146,15 @@ def rate(rows, span=300):
 
 
 TITLE = "CTF score tracker"
-STATUS_COLOR = {"OK": "#3ddc97", "FC": "#ffb454", "FF": "#ff5c8a"}
+# descriptions from the board's legend; red = unreachable, orange = broken, yellow = flags not stored/retrieved
+STATUS = {
+    "OK": ("#3ddc97", "The service passed all tests"),
+    "FC": ("#ff5c8a", "The jury system could not connect to the service"),
+    "FF": ("#ffb454", "The service failed the functional tests"),
+    "FW": ("#e8d35a", "The jury system failed to store confidential information"),
+    "FR": ("#e8d35a", "The jury system could not retrieve confidential information "
+                      "using the normal functionality of the service"),
+}
 
 
 def spike_label(ratio):
@@ -169,7 +166,8 @@ env = Environment(loader=FileSystemLoader(HERE / "templates"), autoescape=select
 env.filters.update(hm=lambda ts: time.strftime("%H:%M", time.localtime(ts)),
                    hms=lambda ts: time.strftime("%H:%M:%S", time.localtime(ts)),
                    spike=spike_label)
-env.globals["status_color"] = STATUS_COLOR
+env.globals.update(status=STATUS, status_color=lambda s: STATUS.get(s, ("#6b8299",))[0],
+                   status_text=lambda s: STATUS.get(s, (None, "Unknown status"))[1])
 
 
 def render(template, **ctx):
